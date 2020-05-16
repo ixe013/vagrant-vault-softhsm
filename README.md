@@ -1,22 +1,9 @@
 ## Vault with SoftHSM
 
-This is a Vagrant setup to sandbox a Vault Enterprise+HSM setup with SoftHSMv2, an open source software-based HSM that uses the PKCS#11 standard interface.
+This is a manual setup to sandbox a Vault Enterprise+HSM setup with SoftHSMv2, an open source software-based HSM that uses the PKCS#11 standard interface. 
 
-## Automatic process
+You need sudo access to install the required packages, but everything else runs in your own account.
 
-There are two scripts:
-
-`setup_softhsm.sh`: This will install the correct packages, and initialize a virtual slot we will use for Vault
-`setup_vault.sh`: This will download the trial Vault Enterprise HSM binary and configure it with systemd
-
-**NOTE: As this is an Enterprise trial, it will auto-seal after 30 minutes unless given a valid license key**
-
-Resources
-
-* https://www.vaultproject.io/docs/enterprise/hsm/index.html
-* https://www.vaultproject.io/docs/enterprise/hsm/configuration.html
-* https://www.opendnssec.org/softhsm/
-* https://github.com/opendnssec/SoftHSMv2
 
 ## Manual Process steps
 
@@ -25,7 +12,7 @@ Resources
 The required packages for Vault HSM on Debian 9 are libltdl7, libsofthsm2, and softhsm2; install them like this:
 
 ```
-$ sudo apt-get update && sudo apt-get install -y libltdl7 libsofthsm2 softhsm2
+$ sudo apt-get update && sudo apt-get install -y libltdl7 libsofthsm2 softhsm2 libltdl-dev
 ```
 
 It's also quite handy to have PKCS related tools such as pkcs11-tool when debugging issues; you can optionally install this tool as part of the opensc package:
@@ -47,19 +34,20 @@ Here we note that our Cryptoki shared library file libsofthsm2.so; your file cou
 
 Make sure that you locate it and note its full path for later use.
 
+### Configure SoftHSM to work with Vault
 Now that you have the required software installed, you'll need to establish a minimal SoftHSM configuration and initialize a token in the slot that you'll use with Vault; first create a directory for the SoftHSM data:
 
 ```
-$ sudo mkdir -p /var/lib/softhsm/tokens/
+export SOFTHSM_CONF=$HOME/.config/softhsm2/softhsm2.conf
+mkdir -p -v $HOME/softhsm/tokens/ $HOME/.config/softhsm2/ $HOME/.config/vault/1
 ```
 
 Next, create a basic SoftHSM configuration file:
 
 ```
-$ sudo mkdir -p /var/lib/softhsm/tokens/
-$ sudo tee /etc/softhsm/softhsm2.conf <<EOF
+tee ~/.config/softhsm2/softhsm2.conf <<EOF
 # SoftHSM v2 configuration file
-directories.tokendir = /var/lib/softhsm/tokens/
+directories.tokendir = $HOME/softhsm/tokens/
 objectstore.backend = file
 # ERROR, WARNING, INFO, DEBUG
 log.level = DEBUG
@@ -89,10 +77,10 @@ Slot 0
         Label:
 ```
 
-Let's use softhsm2-util to initialize a new token in slot 0 for use with Vault:
+Let's use softhsm2-util to initialize a new token in the next free slot for use with Vault:
 
 ```
-$ sudo softhsm2-util --init-token --slot 0 --label "hsm_demo" --pin 1234 --so-pin asdf
+$ export VAULT_HSM_SLOT1=$(softhsm2-util --init-token --free --label "vault-hsm1" --pin 1234 --so-pin asdf | grep -o [0-9]*$)
 ```
 
 Now our slots look like this, with the newly initialized slot 0, which is now actually referred to as slot 112253752 but with the same hsm_example label we originally defined, and the original empty slot 0 is now occupying the slot 1 location:
@@ -141,52 +129,43 @@ We'll be using the most minimal non-developer-mode Vault configuration possible 
 Here's an example minimal Vault HSM configuration; make sure to use the correct value for slot as shown in the `softhsm2-util --show-slots` command output and the correct path your libsofthsm2.so file.
 
 ```
-$ VAULT_HSM_SLOT=$(softhsm2-util --show-slots | grep "^Slot " | head -1 | cut -d " " -f 2)
-
-$ mkdir -p /etc/vault/
-$ sudo cat << EOF > /etc/vault/config.hcl
+$ cat << EOF > $HOME/.config/vault/1/config.hcl
 listener "tcp" {
   address = "127.0.0.1:8200"
   tls_disable = "true"
 }
 
-storage "file" {
-  path = "/home/vault/data"
+storage "raft" {
+  path = "$HOME/.config/vault/1"
+  node_id = "data-vault-1"
 }
+
+#I am testing on WSL which does not support mlock
+disable_mlock = true
+
+ui = true
+api_addr = "https://127.0.0.1:8200"
+cluster_addr = "https://127.0.0.1:8201"
 
 seal "pkcs11" {
   lib            = "/usr/lib/softhsm/libsofthsm2.so"
-  slot           = "${VAULT_HSM_SLOT}"
+  slot           = "${VAULT_HSM_SLOT1}"
   pin            = "1234"
-  key_label      = "hsm_demo"
+  key_label      = "vault-hsm1"
   hmac_key_label = "hmac-key"
   generate_key   = "true"
 }
 EOF
+```
 
-sudo cat << EOF > /etc/systemd/system/vault.service
-[Unit]
-Description=vault agent
-Requires=network-online.target
-After=network-online.target
-[Service]
-Restart=on-failure
-User=root
-Group=root
-PermissionsStartOnly=true
-ExecStart=/usr/local/bin/vault server -config /etc/vault/config.hcl
-ExecReload=/bin/kill -HUP $MAINPID
-KillSignal=SIGINT
-[Install]
-WantedBy=multi-user.target
-EOF
+Start Vault with the following command line :
 
-$ sudo chmod 0644 /etc/systemd/system/vault.service
+```
+nohup vault server --config $HOME/.config/vault/1/config.hcl --log-level=trace 2>&1 > vault1.log &
+tail -50f vault1.log
+```
 
-$ systemctl daemon-reload
-
-$ service vault start
-
+```
 $ service vault status
 ● vault.service - vault agent
    Loaded: loaded (/etc/systemd/system/vault.service; disabled; vendor preset: enabled)
@@ -205,7 +184,7 @@ Nov 21 19:33:20 debian-9 vault[3751]: 2019-11-21T19:33:20.610Z [WARN]  core.lice
 Initialize Vault using a special set of command line flags for use with HSM:
 
 ```
-$ vault operator init -recovery-shares=1 \ recovery-threshold=1
+$ vault operator init -recovery-shares=1 recovery-threshold=1
 Recovery Key 1: A63tTM9+OzxA9t1x5JOJ4WoDJt3xCQDUaiLgHin3xXI=
 
 Initial Root Token: s.M5NklwwKZgyBezgJ6oLFuXJH
