@@ -45,7 +45,7 @@ Now that you have the required software installed, you'll need to establish a mi
 
 ```
 export SOFTHSM_CONF=$HOME/.config/softhsm2/softhsm2.conf
-mkdir -p -v $HOME/softhsm/tokens/ $HOME/.config/softhsm2/ $HOME/.config/vault/1
+mkdir -p -v $HOME/softhsm/tokens/ $HOME/.config/softhsm2/ $HOME/.config/vault/1 $HOME/.config/vault/2 $HOME/.config/vault/3
 ```
 
 Next, create a basic SoftHSM configuration file:
@@ -86,9 +86,12 @@ Slot 0
 Let's use softhsm2-util to initialize a new token in the next free slot for use with Vault:
 
 ```
-$ for N in 1 2 3 
+$ 
+declare -A VAULT_HSM_SLOTS=()
+for N in 1 2 3 
 do
-    softhsm2-util --init-token --free --label "vault-hsm$N" --pin 1234 --so-pin asdf
+    softhsm2-util --init-token --free --label "vault-hsm${N}" --pin 1234 --so-pin asdf
+    VAULT_HSM_SLOT[$N]=$(softhsm2-util --show-slots | grep ^Slot | sed "${N}q;d" | cut -d\  -f2)
 done
 ```
 
@@ -139,61 +142,53 @@ Here's an example minimal Vault HSM configuration; make sure to use the correct 
 
 ```
 $ 
-cat << EOF > $HOME/.config/vault/1/config.hcl
+for N in 1 2 3 
+do
+cat << EOF > $HOME/.config/vault/${N}/config.hcl
 listener "tcp" {
   address = "127.0.0.1:8200"
   tls_disable = "true"
 }
 
 storage "raft" {
-  path = "$HOME/.config/vault/1"
-  node_id = "data-vault-1"
+  path = "$HOME/.config/vault/${N}"
+  node_id = "data-vault-${N}"
 }
 
 #I am testing on WSL which does not support mlock
 disable_mlock = true
 
 ui = true
-api_addr = "https://127.0.0.1:8200"
-cluster_addr = "https://127.0.0.1:8201"
+api_addr = "https://127.0.0.${N}:8200"
+cluster_addr = "https://127.0.0.${N}:8201"
 
 seal "pkcs11" {
   lib            = "/usr/lib/softhsm/libsofthsm2.so"
-  slot           = "${VAULT_HSM_SLOT1}"
+  slot           = "${VAULT_HSM_SLOT[$N]}"
   pin            = "1234"
-  key_label      = "vault-hsm1"
+  key_label      = "vault-hsm${N}"
   hmac_key_label = "hmac-key"
   generate_key   = "true"
 }
 EOF
+done
 ```
 
 Start Vault with the following command line :
 
 ```
-nohup vault server --config $HOME/.config/vault/1/config.hcl --log-level=trace 2>&1 > vault1.log &
-tail -50f vault1.log
+$ 
+for N in 1 2 3 
+do
+echo nohup vault server --config $HOME/.config/vault/${N}/config.hcl --log-level=trace 2>&1 ;#> vault${N}.log &
+done
+tail -50f vault*.log
 ```
-
-```
-$ service vault status
-● vault.service - vault agent
-   Loaded: loaded (/etc/systemd/system/vault.service; disabled; vendor preset: enabled)
-   Active: active (running) since Thu 2019-11-21 19:31:20 UTC; 6min ago
-  Process: 3750 ExecStartPre=/sbin/setcap cap_ipc_lock=+ep /usr/local/bin/vault (code=exited, status=0/SUCCESS)
- Main PID: 3751 (vault)
-    Tasks: 9 (limit: 4915)
-   CGroup: /system.slice/vault.service
-           └─3751 /usr/local/bin/vault server -config /etc/vault/config.hcl
-
-expiration_time="2019-11-21 20:01:21 +0000 UTC" time_left=29m0s
-Nov 21 19:33:20 debian-9 vault[3751]: 2019-11-21T19:33:20.610Z [WARN]  core.licensing: core: licensing warning: expiration_time="2019-11-21 20:01:21 +0000 UTC" time_left=28m0s
-```
-
 
 Initialize Vault using a special set of command line flags for use with HSM:
 
 ```
+$ export VAULT_ADDR=http://localhost:8200
 $ vault operator init -recovery-shares=1 recovery-threshold=1
 Recovery Key 1: A63tTM9+OzxA9t1x5JOJ4WoDJt3xCQDUaiLgHin3xXI=
 
