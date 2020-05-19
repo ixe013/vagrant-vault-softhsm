@@ -51,7 +51,7 @@ mkdir -p -v $HOME/softhsm/tokens/ $HOME/.config/softhsm2/ $HOME/.config/vault/1 
 Next, create a basic SoftHSM configuration file:
 
 ```
-tee ~/.config/softhsm2/softhsm2.conf <<EOF
+tee $HOME/.config/softhsm2/softhsm2.conf <<EOF
 # SoftHSM v2 configuration file
 directories.tokendir = $HOME/softhsm/tokens/
 objectstore.backend = file
@@ -180,7 +180,7 @@ Start Vault with the following command line :
 $ 
 for N in 1 2 3 
 do
-echo nohup vault server --config $HOME/.config/vault/${N}/config.hcl --log-level=trace 2>&1 ;#> vault${N}.log &
+    nohup vault server --config $HOME/.config/vault/${N}/config.hcl --log-level=trace 2>&1 ;#> vault${N}.log &
 done
 tail -50f vault*.log
 ```
