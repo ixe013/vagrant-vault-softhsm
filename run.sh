@@ -4,6 +4,7 @@ CONFIG_BASE=$HOME/.config
 
 #Default values
 NODES=3
+#Set this environment variable so that softhsm2-util uses our configuration file
 SOFTHSM_CONF=$CONFIG_BASE/softhsm2/softhsm2.conf
 
 
@@ -13,43 +14,33 @@ herefile() {
 
 
 function clean {
-    echo Deleting previous tokens...
+    echo Deleting previous tokens and vault data...
     rm -Rf \
-        $HOME/softhsm/tokens/ \
         $CONFIG_BASE/softhsm2/ \
         $CONFIG_BASE/vault/1 \
         $CONFIG_BASE/vault/2 \
         $CONFIG_BASE/vault/3 \
         ;
-    echo Deleting previous Vault configuration and data
-    mkdir -p \
-        $HOME/softhsm/tokens/ \
-        $CONFIG_BASE/softhsm2/ \
-        $CONFIG_BASE/vault/1 \
-        $CONFIG_BASE/vault/2 \
-        $CONFIG_BASE/vault/3 \
-        ;
-    rm -v $CONFIG_BASE/softhsm2/softhsm2.conf
 }
 
 
 function config {
     mkdir -p \
-        $HOME/softhsm/tokens/ \
-        $HOME/.config/softhsm2/ \
-        $HOME/.config/vault/1 \
-        $HOME/.config/vault/2 \
-        $HOME/.config/vault/3 \
+        $CONFIG_BASE/softhsm2/tokens/ \
+        $CONFIG_BASE/vault/1 \
+        $CONFIG_BASE/vault/2 \
+        $CONFIG_BASE/vault/3 \
         ;
 
     herefile << EOF > $CONFIG_BASE/softhsm2/softhsm2.conf
         # SoftHSM v2 configuration file
-        directories.tokendir = $HOME/softhsm/tokens/
+        directories.tokendir = $CONFIG_BASE/softhsm2/tokens/
         objectstore.backend = file
         # ERROR, WARNING, INFO, DEBUG
         log.level = DEBUG
 EOF
 
+    #Generate an HSM key per Vault instance
     declare -A VAULT_HSM_SLOTS=()
     for (( N=1; N<=$NODES; N++ ))
     do
@@ -57,6 +48,7 @@ EOF
         VAULT_HSM_SLOT[$N]=$(softhsm2-util --show-slots | grep ^Slot | sed "${N}q;d" | cut -d\  -f2)
     done
 
+    #Create Vault configuration files, each with its own HSM slot
     for (( N=1; N<=$NODES; N++ ))
     do
         herefile << EOF > $CONFIG_BASE/vault/${N}/config.hcl
@@ -151,7 +143,7 @@ do
             ;;
          
         *)
-            echo $"Ignoring $task not in {clean|config[ure]|start}"
+            echo $"Ignoring $task not in {install|clean|config[ure]|start}"
             exit 1
     esac
 done
