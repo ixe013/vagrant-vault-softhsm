@@ -66,8 +66,10 @@ EOF
             disable_mlock = true
 
             ui = true
-            api_addr = "https://127.0.0.${N}:8200"
+            api_addr = "http://127.0.0.${N}:8200"
             cluster_addr = "https://127.0.0.${N}:8201"
+
+            pid_file = "$CONFIG_BASE/vault/pid${N}"
 
             seal "pkcs11" {
               lib            = "/usr/lib/softhsm/libsofthsm2.so"
@@ -94,6 +96,16 @@ function start_vault {
     for (( N=1; N<=$NODES; N++ ))
     do
         nohup vault server --config $CONFIG_BASE/vault/${N}/config.hcl --log-level=trace 2>&1 > vault${N}.log &
+    done
+}
+
+function stop_vault {
+    echo "Stopping Vault(s)"
+    ps -ef | grep -v grep | grep vault
+    for (( N=1; N<=$NODES; N++ ))
+    do
+        echo " pid $(cat $CONFIG_BASE/vault/pid${N})"
+        kill $(cat $CONFIG_BASE/vault/pid${N})
     done
 }
 
@@ -140,6 +152,10 @@ do
          
         start)
             start_vault
+            ;;
+         
+        stop)
+            stop_vault
             ;;
          
         *)
