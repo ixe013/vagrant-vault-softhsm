@@ -41,12 +41,8 @@ function config {
 EOF
 
     #Generate an HSM key per Vault instance
-    declare -A VAULT_HSM_SLOTS=()
-    for (( N=1; N<=$NODES; N++ ))
-    do
-        softhsm2-util --init-token --free --label "vault-hsm${N}" --pin 1234 --so-pin asdf
-        VAULT_HSM_SLOT[$N]=$(softhsm2-util --show-slots | grep ^Slot | sed "${N}q;d" | cut -d\  -f2)
-    done
+    softhsm2-util --init-token --free --label "vault-hsm-key" --pin 1234 --so-pin asdf
+    VAULT_HSM_SLOT=$(softhsm2-util --show-slots | grep ^Slot | sed "q;d" | cut -d\  -f2)
 
     #Create Vault configuration files, each with its own HSM slot
     for (( N=1; N<=$NODES; N++ ))
@@ -73,10 +69,10 @@ EOF
 
             seal "pkcs11" {
               lib            = "/usr/lib/softhsm/libsofthsm2.so"
-              slot           = "${VAULT_HSM_SLOT[$N]}"
+              slot           = "$VAULT_HSM_SLOT"
               pin            = "1234"
-              key_label      = "vault-hsm${N}"
-              hmac_key_label = "hmac-key"
+              key_label      = "vault-hsm-key"
+              hmac_key_label = "vault-hsm-hmac-key"
               generate_key   = "true"
             }
 EOF
@@ -96,12 +92,15 @@ function start_vault {
     for (( N=1; N<=$NODES; N++ ))
     do
         nohup vault server --config $CONFIG_BASE/vault/${N}/config.hcl --log-level=trace 2>&1 > vault${N}.log &
+        sleep 1 ; #Seems to help with auto-unsel, as if SoftHSM2 can't handle concurrency
     done
+
+    ps -ef | grep -v grep | grep "vault server"
 }
 
 function stop_vault {
     echo "Stopping Vault(s)"
-    ps -ef | grep -v grep | grep vault
+    
     for (( N=1; N<=$NODES; N++ ))
     do
         echo " pid $(cat $CONFIG_BASE/vault/pid${N})"
