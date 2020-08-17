@@ -91,7 +91,7 @@ function install {
 function start_vault {
     for (( N=1; N<=$NODES; N++ ))
     do
-        nohup vault server --config $CONFIG_BASE/vault/${N}/config.hcl --log-level=trace 2>&1 > vault${N}.log &
+        nohup vault server --config $CONFIG_BASE/vault/${N}/config.hcl --log-level=trace 2>&1 >> vault${N}.log &
         sleep 1 ; #Seems to help with auto-unsel, as if SoftHSM2 can't handle concurrency
     done
 
