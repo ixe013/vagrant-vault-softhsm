@@ -1,26 +1,63 @@
-## Vault with SoftHSM
+# Vault with SoftHSM
 
 This is a manual setup to sandbox a Vault Enterprise+HSM setup with SoftHSMv2, an open source software-based HSM that uses the PKCS#11 standard interface. 
 
 You need sudo access to install the required packages, but everything else runs in your own account.
 
 
-## Manual Process steps
+# Up and running
 
-### Install Vault
+## Install Vault
 
 ```
-curl -kOL -C - https://releases.hashicorp.com/vault/1.4.1/vault_1.4.1_linux_amd64.zip
-sudo unzip vault_1.4.1_linux_amd64.zip -d /usr/local/bin/.
+curl -OL -C - https://releases.hashicorp.com/vault/1.5.3+ent.hsm/vault_1.5.3+ent.hsm_linux_amd64.zip
+sudo unzip vault_*ent.hsm_linux_amd64.zip -d /usr/local/bin/.
 ```
 
-### Install SoftHSM
+## Install SoftHSM
 
 The required packages for Vault HSM on Debian 9 are libltdl7, libsofthsm2, and softhsm2; install them like this:
 
 ```
-$ sudo apt-get update && sudo apt-get install -y libltdl7 libsofthsm2 softhsm2 libltdl-dev
+chmod +x run.sh
+sudo bash ./run.sh install
 ```
+
+## Configure the clusther
+
+The cluster will run on 127.0.0.1:8200 by default. To change the port, set the `API_PORT`environment variable. You can also
+set the `CLUSTER_PORT` variable, or it will default to `API_PORT+1`. For example:
+
+```
+export API_PORT=9200
+```
+
+The `run.sh` script will configure everything for you, just run:
+
+```
+./run.sh config
+```
+
+You can clean the previous keys by running a `clean` first, like this:
+
+```
+./run.sh clean config
+```
+
+## Start the cluster
+
+```
+./run.sh start
+```
+
+## Stop the cluster
+
+```
+./run.sh stop
+```
+
+
+# Manually installing everything
 
 It's also quite handy to have PKCS related tools such as pkcs11-tool when debugging issues; you can optionally install this tool as part of the opensc package:
 

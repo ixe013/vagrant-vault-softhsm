@@ -7,6 +7,8 @@ NODES=3
 #Set this environment variable so that softhsm2-util uses our configuration file
 SOFTHSM_CONF=$CONFIG_BASE/softhsm2/softhsm2.conf
 
+: ${API_PORT:=8200}
+: ${CLUSTER_PORT:=$(( $API_PORT+1))}
 
 herefile() {
   expand | awk 'NR == 1 {match($0, /^ */); l = RLENGTH + 1} {print substr($0, l)}'
@@ -49,7 +51,7 @@ EOF
     do
         herefile << EOF > $CONFIG_BASE/vault/${N}/config.hcl
             listener "tcp" {
-              address = "127.0.0.${N}:8200"
+              address = "127.0.0.${N}:$API_PORT"
               tls_disable = "true"
             }
 
@@ -62,8 +64,8 @@ EOF
             disable_mlock = true
 
             ui = true
-            api_addr = "http://127.0.0.${N}:8200"
-            cluster_addr = "https://127.0.0.${N}:8201"
+            api_addr = "http://127.0.0.${N}:$API_PORT"
+            cluster_addr = "https://127.0.0.${N}:$CLUSTER_PORT"
 
             pid_file = "$CONFIG_BASE/vault/pid${N}"
 
