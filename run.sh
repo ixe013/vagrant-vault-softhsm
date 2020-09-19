@@ -1,14 +1,16 @@
 #!/bin/bash
 
-CONFIG_BASE=$HOME/.config
+: ${CONFIG_BASE:=$HOME/.config}
 
 #Default values
-NODES=3
+: ${NODES:=3}
+
 #Set this environment variable so that softhsm2-util uses our configuration file
-SOFTHSM_CONF=$CONFIG_BASE/softhsm2/softhsm2.conf
+: ${SOFTHSM_CONF:=$CONFIG_BASE/softhsm2/softhsm2.conf}
 
 : ${API_PORT:=8200}
-: ${CLUSTER_PORT:=$(( $API_PORT+1))}
+: ${CLUSTER_PORT:=$(( $API_PORT+1 ))}
+: ${CLUSTER_IDENTIFIER:=cluster_${API_PORT}}
 
 herefile() {
   expand | awk 'NR == 1 {match($0, /^ */); l = RLENGTH + 1} {print substr($0, l)}'
@@ -18,25 +20,23 @@ herefile() {
 function clean {
     echo Deleting previous tokens and vault data...
     rm -Rf \
-        $CONFIG_BASE/softhsm2/ \
-        $CONFIG_BASE/vault/1 \
-        $CONFIG_BASE/vault/2 \
-        $CONFIG_BASE/vault/3 \
+        $CONFIG_BASE/softhsm2 \
+        $CONFIG_BASE/vault \
         ;
 }
 
 
 function config {
     mkdir -p \
-        $CONFIG_BASE/softhsm2/tokens/ \
-        $CONFIG_BASE/vault/1 \
-        $CONFIG_BASE/vault/2 \
-        $CONFIG_BASE/vault/3 \
+        $CONFIG_BASE/softhsm2/$CLUSTER_IDENTIFIER/tokens/ \
+        $CONFIG_BASE/vault/$CLUSTER_IDENTIFIER/1 \
+        $CONFIG_BASE/vault/$CLUSTER_IDENTIFIER/2 \
+        $CONFIG_BASE/vault/$CLUSTER_IDENTIFIER/3 \
         ;
 
     herefile << EOF > $CONFIG_BASE/softhsm2/softhsm2.conf
         # SoftHSM v2 configuration file
-        directories.tokendir = $CONFIG_BASE/softhsm2/tokens/
+        directories.tokendir = $CONFIG_BASE/softhsm2/$CLUSTER_IDENTIFIER/tokens/
         objectstore.backend = file
         # ERROR, WARNING, INFO, DEBUG
         log.level = DEBUG
@@ -49,14 +49,14 @@ EOF
     #Create Vault configuration files, each with its own HSM slot
     for (( N=1; N<=$NODES; N++ ))
     do
-        herefile << EOF > $CONFIG_BASE/vault/${N}/config.hcl
+        herefile << EOF > $CONFIG_BASE/vault/$CLUSTER_IDENTIFIER/${N}/config.hcl
             listener "tcp" {
               address = "127.0.0.${N}:$API_PORT"
               tls_disable = "true"
             }
 
             storage "raft" {
-              path = "$CONFIG_BASE/vault/${N}"
+              path = "$CONFIG_BASE/vault/$CLUSTER_IDENTIFIER/${N}"
               node_id = "data-vault-${N}"
             }
 
@@ -67,7 +67,7 @@ EOF
             api_addr = "http://127.0.0.${N}:$API_PORT"
             cluster_addr = "https://127.0.0.${N}:$CLUSTER_PORT"
 
-            pid_file = "$CONFIG_BASE/vault/pid${N}"
+            pid_file = "$CONFIG_BASE/vault/$CLUSTER_IDENTIFIER/pid${N}"
 
             seal "pkcs11" {
               lib            = "/usr/lib/softhsm/libsofthsm2.so"
@@ -93,10 +93,17 @@ function install {
 function start_vault {
     for (( N=1; N<=$NODES; N++ ))
     do
-        nohup vault server --config $CONFIG_BASE/vault/${N}/config.hcl --log-level=trace 2>&1 >> vault${N}.log &
-        sleep 1 ; #Seems to help with auto-unsel, as if SoftHSM2 can't handle concurrency
-    done
+        nohup vault server --config $CONFIG_BASE/vault/$CLUSTER_IDENTIFIER/${N}/config.hcl --log-level=trace 2>&1 >> vault${N}.log &
+        until curl --fail --silent --max-time 1 http://127.0.0.$N:$API_PORT/v1/sys/health?standbycode=200\&sealedcode=200\&uninitcode=200\&drsecondarycode=200 --header "X-Vault-No-Request-Forwardilg: 1" -o /dev/null; do echo -n . ; sleep 1; done
+        echo -n .
 
+        #until (vault status --address http://127.0.0.${N}:$API_PORT | grep -q "HA Cluster.*https")
+        #do
+            #echo -n "."
+            ##sleep 1
+        #done
+    done
+ 
     ps -ef | grep -v grep | grep "vault server"
 }
 
@@ -105,8 +112,10 @@ function stop_vault {
     
     for (( N=1; N<=$NODES; N++ ))
     do
-        echo " pid $(cat $CONFIG_BASE/vault/pid${N})"
-        kill $(cat $CONFIG_BASE/vault/pid${N})
+        PID=$(cat $CONFIG_BASE/vault/$CLUSTER_IDENTIFIER/pid${N})
+        echo "Waiting for vault pid $PID to end"
+        kill $PID
+        tail --pid=$PID -f /dev/null
     done
 }
 
