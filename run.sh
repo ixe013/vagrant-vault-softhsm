@@ -20,8 +20,8 @@ herefile() {
 function clean {
     echo Deleting previous tokens and vault data...
     rm -Rf \
-        $CONFIG_BASE/softhsm2 \
-        $CONFIG_BASE/vault \
+        $CONFIG_BASE/softhsm2/$CLUSTER_IDENTIFIER \
+        $CONFIG_BASE/vault/$CLUSTER_IDENTIFIER \
         ;
 }
 
@@ -93,19 +93,25 @@ function install {
 function start_vault {
     for (( N=1; N<=$NODES; N++ ))
     do
-        nohup vault server --config $CONFIG_BASE/vault/$CLUSTER_IDENTIFIER/${N}/config.hcl --log-level=trace 2>&1 >> vault${N}.log &
-        until curl --fail --silent --max-time 1 http://127.0.0.$N:$API_PORT/v1/sys/health?standbycode=200\&sealedcode=200\&uninitcode=200\&drsecondarycode=200 --header "X-Vault-No-Request-Forwardilg: 1" -o /dev/null; do echo -n . ; sleep 1; done
-        echo -n .
-
-        #until (vault status --address http://127.0.0.${N}:$API_PORT | grep -q "HA Cluster.*https")
-        #do
-            #echo -n "."
-            ##sleep 1
-        #done
+        nohup vault server --config $CONFIG_BASE/vault/$CLUSTER_IDENTIFIER/${N}/config.hcl --log-level=trace >> vault${N}.log 2>&1 &
+        until curl --fail --silent --max-time 1 http://127.0.0.$N:$API_PORT/v1/sys/health?standbycode=200\&sealedcode=200\&uninitcode=200\&drsecondarycode=200 --header "X-Vault-No-Request-Forwardilg: 1" -o /dev/null; do echo -n $N ; sleep 1; done
     done
  
+    echo
     ps -ef | grep -v grep | grep "vault server"
 }
+
+
+function raft_join {
+    echo "Building the Vault Raft cluster"
+    
+    # Start with node 2, node 1 is already Raft
+    for (( N=2; N<=$NODES; N++ ))
+    do
+        VAULT_ADDR=http://127.0.0.${N}:$API_PORT vault operator raft join http://127.0.0.1:$API_PORT
+    done
+}
+
 
 function stop_vault {
     echo "Stopping Vault(s)"
@@ -162,6 +168,10 @@ do
          
         start)
             start_vault
+            ;;
+         
+        join)
+            raft_join
             ;;
          
         stop)
