@@ -5,12 +5,12 @@
 #Default values
 : ${NODES:=3}
 
-#Set this environment variable so that softhsm2-util uses our configuration file
-: ${SOFTHSM_CONF:=$CONFIG_BASE/softhsm2/softhsm2.conf}
-
 : ${API_PORT:=8200}
 : ${CLUSTER_PORT:=$(( $API_PORT+1 ))}
 : ${CLUSTER_IDENTIFIER:=cluster_${API_PORT}}
+: ${SOFTHSM2_CONF:=$CONFIG_BASE/softhsm2/$CLUSTER_IDENTIFIER/softhsm2.conf}
+
+export SOFTHSM2_CONF
 
 herefile() {
   expand | awk 'NR == 1 {match($0, /^ */); l = RLENGTH + 1} {print substr($0, l)}'
@@ -27,14 +27,14 @@ function clean {
 
 
 function config {
-    mkdir -p \
+    mkdir -vp \
         $CONFIG_BASE/softhsm2/$CLUSTER_IDENTIFIER/tokens/ \
         $CONFIG_BASE/vault/$CLUSTER_IDENTIFIER/1 \
         $CONFIG_BASE/vault/$CLUSTER_IDENTIFIER/2 \
         $CONFIG_BASE/vault/$CLUSTER_IDENTIFIER/3 \
         ;
 
-    herefile << EOF > $CONFIG_BASE/softhsm2/softhsm2.conf
+    herefile << EOF > $CONFIG_BASE/softhsm2/$CLUSTER_IDENTIFIER/softhsm2.conf
         # SoftHSM v2 configuration file
         directories.tokendir = $CONFIG_BASE/softhsm2/$CLUSTER_IDENTIFIER/tokens/
         objectstore.backend = file
@@ -57,7 +57,7 @@ EOF
 
             storage "raft" {
               path = "$CONFIG_BASE/vault/$CLUSTER_IDENTIFIER/${N}"
-              node_id = "data-vault-${N}"
+              node_id = "data-vault-$API_PORT-${N}"
             }
 
             #I am testing on WSL which does not support mlock
@@ -93,8 +93,9 @@ function install {
 function start_vault {
     for (( N=1; N<=$NODES; N++ ))
     do
+        echo -n $N
         nohup vault server --config $CONFIG_BASE/vault/$CLUSTER_IDENTIFIER/${N}/config.hcl --log-level=trace >> vault${N}.log 2>&1 &
-        until curl --fail --silent --max-time 1 http://127.0.0.$N:$API_PORT/v1/sys/health?standbycode=200\&sealedcode=200\&uninitcode=200\&drsecondarycode=200 --header "X-Vault-No-Request-Forwardilg: 1" -o /dev/null; do echo -n $N ; sleep 1; done
+        until curl --fail --silent --max-time 5 http://127.0.0.${N}:${API_PORT}/v1/sys/health?standbycode=200\&sealedcode=200\&uninitcode=200\&drsecondarycode=200 --header "X-Vault-No-Request-Forwardilg: 1" -o /dev/null; do echo -n $N ; sleep 0.5; done
     done
  
     echo
